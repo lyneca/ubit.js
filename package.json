@@ -10,5 +10,8 @@
   "license": "ISC",
   "dependencies": {
     "eslint": "^6.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^3.7.2"
   }
 }
