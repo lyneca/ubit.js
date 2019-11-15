@@ -11,130 +11,107 @@ function find_microbit(): Promise<SerialPort.PortInfo[]> {
         ));
 }
 
-function sleep(ms: number) {
-    return new Promise(resolve => {
-        setTimeout(resolve, ms);
-    })
-}
-
 function get_ms(): number {
     return (new Date()).getTime();
 }
 
-function flush_to_msg(device: SerialPort, msg: string): string {
-    // Read the rx serial data until we reach an expected message.
-    let data: string = "";
-    let incoming;
-    const start_time = get_ms();
-    while (!data.endsWith(msg)) {
-        incoming = device.read(1);
-        if (incoming !== null) data += incoming;
-        if (get_ms() > start_time + 1000) return null;
-    }
-    return data;
+interface Response {
+    response: string;
+    err: string;
 }
 
-async function raw_on(device: SerialPort): void {
-    // Put the microbit into raw mode
-
-    const raw_repl_msg: string = 'raw REPL; CTRL-B to exit\r\n>';
-
-    // Send CTRL-B to end raw mode if required.
-    device.write('\x02');
-
-    // Send CTRL-C three times between pauses to break out of loop.
-    
-    for (let i: number = 0; i < 3; i++) {
-        device.write('\r\x03');
-        await sleep(10);
-    }
-
-    device.drain();
-
-    // Go into raw mode with CTRL-A.
-    device.write('\r\x01');
-    flush_to_msg(device, raw_repl_msg)
-
-    // Soft Reset with CTRL-D
-    device.write('\x04')
-    flush_to_msg(device, 'soft reboot\r\n')
-
-    // Some MicroPython versions/ports/forks provide a different message after
-    // a Soft Reset, check if we are in raw REPL, if not send a CTRL-A again
-    const data = flush_to_msg(device, raw_repl_msg);
-
-    if (data === null) {
-        device.write('\r\x01')
-        flush_to_msg(device, raw_repl_msg)
-    }
-    device.drain();
+function sleep(n: number): Promise<null> {
+    return new Promise(resolve => setTimeout(resolve, n));
 }
 
-function raw_off(device: SerialPort): void { 
-    // Take the microbit out of raw mode
-    device.write('\x02');  // Send CTRL-B to get out of raw mode.
-}
-
-function get_serial(): Promise<SerialPort | null> {
+function get_serial(): Promise<SerialPort> {
     // Return a Serial object representing the first microbit connected
     return find_microbit()
-        .then((device_list: SerialPort.PortInfo[]) => {
-            if (device_list && device_list[0].path) {
-                return new SerialPort(device_list[0].path);
-            } else if (device_list && device_list[0].comName) {
-                return new SerialPort(device_list[0].comName);
-            } else return null;
-        });
-    
-}
-
-function version() {
-    // Return version information of the connected microbit 
+    .then((device_list: SerialPort.PortInfo[]) => {
+        if (device_list && device_list[0].path) {
+            return new SerialPort(device_list[0].path, { baudRate: 115200 });
+        } else if (device_list && device_list[0].comName) {
+            return new SerialPort(device_list[0].comName, { baudRate: 115200 });
+        } else throw new Error("No devices found!");
+    });
 }
 
 export class Microbit {
-    device: SerialPort | null;
+    device: SerialPort;
 
-    async setup() {
-        if (!this.device) this.device = await get_serial();
+    constructor(device: SerialPort) {
+        this.device = device;
+        device.setEncoding('utf8');
     }
 
-    constructor(port?: string) {
-        if (port) {
-            this.device = new SerialPort(port);
-        } else {
-            this.device = null;
-        }
-    }
+    async raw_on() {
+        // Put the microbit into raw mode
+        console.log("Turning on raw mode...")
 
-    async execute(commands: string[]) {
-        // Execute a set of commands on the microbit
-        this.raw_on();
+        this.device.read();
         await sleep(100);
-        let result: string = "";
-        commands.forEach(async (command: string) => {
-            this.device.write(command);
-            await sleep(50);
-            this.device.write('\x04');
-            const response = this.flush_to_msg('\x04>');
-            const [out, err] = response.substring(2, -2).split('\x04', 1);
-            result += out;
-            if (err) return {response: '', err: err};
+        // Send CTRL-B to end raw mode if required.
+        this.device.write('\x02\x03\x03\x03\x01');
+        await sleep(100);
+        this.device.read();
+    }
+
+    async raw_off() { 
+        // Take the microbit out of raw mode
+        this.device.read();
+        await sleep(100);
+        console.log("Turning off raw mode...")
+        this.device.write('\x02');  // Send CTRL-B to get out of raw mode.
+        await sleep(100);
+    }
+
+    write(string: string) {
+        return new Promise((resolve) => {
+            this.device.write(string, 'utf8', resolve);
         });
+    }
+
+    async execute(commands: string[]): Promise<string> {
+        // Execute a set of commands on the microbit
+        this.device.read();
+        await sleep(10);
+        for (let command of commands) {
+            // console.log(`Writing ${command}...`)
+            this.device.read();
+            await this.device.write(command);
+            await this.device.write('\x04');
+            await sleep(10);
+        }
         await sleep(100);
-        this.raw_on();
-        return { response: result, err: '' };
+        let response = this.device.read();
+        let out: string = response.substring(2, response.length - 2).split('\x04');
+        return out[0];
     }
 
 
-    async ls(): Promise<String[]> {
-        if (!this.device) await this.setup();
-        return this.execute(this.device, [
+    async ls(): Promise<string[]> {
+        let result = await this.execute([
             'import os',
-            'print(os.listdir())',
-        ]);
+            'print("\\n".join([x for x in os.listdir()]))',
+        ]).then((result: string) => result.trim().split('\r\n'));
+        return result;
     }
+
     rm() {}
     put() {}
     get() {}
 }
+
+async function main() {
+    const microbit = await get_serial().then(device => new Microbit(device))
+
+    microbit.raw_on();
+    const files: String[] = await microbit.ls();
+    console.log(files);
+    // microbit.execute(["from microbit import *","display.scroll('hello')"])
+    // .then(r => console.log(r))
+    // .catch(e => console.log("Error:", e));
+    microbit.device.close();
+}
+
+main();
