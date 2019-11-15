@@ -84,12 +84,12 @@ export class Microbit {
     async execute(commands: string[], start?: string): Promise<string> {
         // Execute a set of commands on the microbit
         for (let command of commands) {
-            console.log(`send: ${JSON.stringify(command)}`)
-            this.device.read();
+            // console.log(`send: ${JSON.stringify(command)}`)
             await this.device.write(command);
             await this.device.write('\x04');
             await sleep(10);
         }
+        if (!start) return "";
         return new Promise((resolve) => {
             this.parser.on('data', data => {
                 if (data != "OK\x04") {
@@ -120,9 +120,14 @@ export class Microbit {
         return result;
     }
 
-    rm() {}
+    async rm(filename: string) {
+        await this.execute([
+            'import os',
+            `os.remove('${filename}')`,
+        ])
+    }
 
-    async put(filename: string, target?: string): Promise<boolean> {
+    async put(filename: string, target?: string) {
         if (!target) target = filename;
         const stream = fs.createReadStream(filename);
         const commands: string[] = [
@@ -140,12 +145,9 @@ export class Microbit {
             });
             stream.on('close', () => resolve());
         });
-        commands.push('fd.close()')
-            
-        console.log(commands)
-
+        commands.push('fd.close()');
         await this.execute(commands);
-        return true;
+        stream.close()
     }
 
     async get(filename: string, target?: string) {
@@ -162,15 +164,17 @@ export class Microbit {
         console.log(JSON.stringify(contents));
         stream.write(contents);
         stream.close();
-        return;
     }
 }
 
 async function main() {
     const microbit = await get_first_microbit()
         .then(Microbit.init)
+    console.log(await microbit.ls());
     await microbit.put('test');
-    await microbit.get('test', 'test_1');
+    console.log(await microbit.ls());
+    await microbit.rm('test');
+    console.log(await microbit.ls());
     microbit.close();
 }
 
