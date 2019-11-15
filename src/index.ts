@@ -1,5 +1,4 @@
 import SerialPort from 'serialport';
-import os from 'os';
 import fs from 'fs';
 
 function find_microbits(): Promise<SerialPort.PortInfo[]> {
@@ -21,7 +20,7 @@ function sleep(n: number): Promise<null> {
     return new Promise(resolve => setTimeout(resolve, n));
 }
 
-function get_first_microbit(): Promise<SerialPort> {
+export function get_first_microbit(): Promise<SerialPort> {
     // Return a Serial object representing the first microbit connected
     return find_microbits()
         .then((device_list: SerialPort.PortInfo[]) => {
@@ -31,13 +30,13 @@ function get_first_microbit(): Promise<SerialPort> {
         });
 }
 
-function serial_from_portinfo(port: SerialPort.PortInfo): SerialPort | undefined {
+export function serial_from_portinfo(port: SerialPort.PortInfo): SerialPort | undefined {
     if (port.path)
         return new SerialPort(port.path, { baudRate: 115200 });
     else return undefined;
 }
 
-function serial_from_port(port: string): SerialPort {
+export function serial_from_port(port: string): SerialPort {
     return new SerialPort(port, { baudRate: 115200 });
 }
 
@@ -166,16 +165,3 @@ export class Microbit {
         stream.close();
     }
 }
-
-async function main() {
-    const microbit = await get_first_microbit()
-        .then(Microbit.init)
-    console.log(await microbit.ls());
-    await microbit.put('test');
-    console.log(await microbit.ls());
-    await microbit.rm('test');
-    console.log(await microbit.ls());
-    microbit.close();
-}
-
-main();
